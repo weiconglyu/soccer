@@ -1,24 +1,15 @@
-library(shiny)
-library(DT)
-library(RSQLite)
-library(DBI)
-
 shinyServer(function(input, output, session) {
-    con <- dbConnect(SQLite(), 'database.sqlite')
-    # updateSelectizeInput(session, 'view-table-select', choices = dbListTables(con))
-    
     output$`view-table` <- renderDT({
-        table <- input$`view-table-select`
-        query <- if (table == 'League')
-            'SELECT L.id, L.name, C.name AS country
-             FROM League L, Country C
-             WHERE L.country_id = C.id'
-        else
-            paste0('SELECT * FROM ', table)
-        res <- dbSendQuery(con, query)
-        result <- dbFetch(res)
-        dbClearResult(res)
-        result
-    }, options = list(lengthMenu = c(5, 10, 15, 30, 50), pageLength = 15),
+        dbGetQuery(con, paste0('SELECT * FROM ', input$`view-table-select`))
+    }, options = list(lengthMenu = c(5, 10, 15, 30, 50), pageLength = 15,
+                      scrollX = T, scrollY = T, scrollCollapse = T),
        rownames = F, selection = 'none')
+    
+    output$`team-info` <- renderDT({
+        leagueID <- input$`team-info-select`
+        dbGetQuery(con, paste0('SELECT * FROM Team NATURAL JOIN TeamInfo',
+                               if (leagueID == -1) '' else paste0(' WHERE leagueID = ', leagueID)))
+    }, options = list(lengthMenu = c(5, 10, 15, 30, 50), pageLength = 15,
+                      scrollX = T, scrollY = T, scrollCollapse = T),
+    rownames = F, selection = 'none')
 })
