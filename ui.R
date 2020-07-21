@@ -11,9 +11,10 @@ dashboardPage(
     dashboardSidebar(
         hr(),
         sidebarMenu(id = 'tabs',
-                    menuItem('View/Edit Raw Tables', tabName = 'view', icon = icon('table'), selected = T),
-                    menuItem('Team Information', tabName = 'team', icon = icon('users')),
-                    menuItem('Player Information', tabName = 'player', icon = icon('running'))),
+                    menuItem('Raw Tables', tabName = 'view', icon = icon('table'), selected = T),
+                    menuItem('Teams', tabName = 'team', icon = icon('users')),
+                    menuItem('Players', tabName = 'player', icon = icon('running')),
+                    menuItem('Matches', tabName = 'match', icon = icon('hourglass-half'))),
         hr(),
         conditionalPanel('input.tabs == "view"',
                          fluidRow(
@@ -27,7 +28,7 @@ dashboardPage(
         conditionalPanel('input.tabs == "team"',
                          fluidRow(
                              column(12,
-                                    selectInput('team-info-select', 'League:', c(`(All)` = -1, league), selected = -1,
+                                    selectInput('team-info-select', 'League:', addAll(league), selected = -1,
                                                 selectize = F, size = length(league) + 1)
                              )
                          )
@@ -35,17 +36,33 @@ dashboardPage(
         conditionalPanel('input.tabs == "player"',
                          fluidRow(
                              column(12,
-                                    selectizeInput('player-info-select-league', 'League:', c(`(All)` = -1, league), selected = -1),
+                                    selectizeInput('player-info-select-league', 'League:', league, selected = -1),
                                     selectizeInput('player-info-select-team', 'Team:', NULL)
                              )
                          )
-        )
+        ),
+        conditionalPanel('input.tabs == "match"',
+                         fluidRow(
+                             column(12,
+                                    strong('Home Team:', style = 'margin-left: 10px'),
+                                    span(class = 'nobottom', selectizeInput('match-info-home-league', NULL, addAll(league), selected = -1)),
+                                    span(class = 'notop', selectizeInput('match-info-home-team', NULL, NULL)),
+                                    #hr(class = 'sep'),
+                                    strong('Away Team:', style = 'margin-left: 10px'),
+                                    span(class = 'nobottom', selectizeInput('match-info-away-league', NULL, addAll(league), selected = -1)),
+                                    span(class = 'notop', selectizeInput('match-info-away-team', NULL, NULL)),
+                                    #hr(class = 'sep'),
+                                    div(class = 'inline',
+                                        actionButton('match-info-swap', 'Swap'),
+                                        #actionButton('match-info-submit', 'Submit')
+                                    )
+                             )
+                         ))
     ),
     
     dashboardBody(
-        tags$head(
-            tags$link(rel = 'stylesheet', type = 'text/css', href = 'ui.css')
-        ),
+        useShinyjs(),
+        includeCSS('ui.css'),
         tabItems(
             tabItem('view',
                     fluidPage(
@@ -60,6 +77,13 @@ dashboardPage(
             tabItem('player',
                     fluidPage(
                         DTOutput('player-info')
+                    )
+            ),
+            tabItem('match',
+                    fluidPage(
+                        DTOutput('match-info'),
+                        p(),
+                        plotOutput('match-plot')
                     )
             )
         )

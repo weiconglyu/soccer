@@ -1,0 +1,32 @@
+.datatables {
+    white-space: nowrap;
+}
+
+.datatable-buttons {
+    text-align: center;
+    overflow: auto;
+    display: grid;
+}
+
+.sep {
+    margin: 12px 10px 12px 10px;
+}
+
+.nobottom .form-group {
+    margin-bottom: 0 !important;
+}
+
+.notop .form-group {
+    padding-top: 0 !important;
+}
+
+.inline {
+    display: block;
+    text-align: center;
+}
+
+.inline button {
+    display: inline !important;
+    margin-left: 10px !important;
+    margin-right: 10px !important;
+}
