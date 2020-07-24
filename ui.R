@@ -4,6 +4,8 @@ league <- with(dbGetQuery(con, 'SELECT leagueID, leagueName
                                 FROM League
                                 ORDER BY leagueName'),
                as.list(setNames(leagueID, leagueName)))
+if (length(league) == 0)
+    league <- list(`(No League)` = -2)
 
 dashboardPage(
     title = 'Visualization of European Professional Football and Match Result Prediction',
@@ -29,14 +31,14 @@ dashboardPage(
                          fluidRow(
                              column(12,
                                     selectInput('team-info-select', 'League:', addAll(league), selected = -1,
-                                                selectize = F, size = length(league) + 1)
+                                                selectize = F, size = min(length(league) + 1, 15))
                              )
                          )
         ),
         conditionalPanel('input.tabs == "player"',
                          fluidRow(
                              column(12,
-                                    selectizeInput('player-info-select-league', 'League:', league, selected = -1),
+                                    selectizeInput('player-info-select-league', 'League:', league),
                                     selectizeInput('player-info-select-team', 'Team:', NULL)
                              )
                          )

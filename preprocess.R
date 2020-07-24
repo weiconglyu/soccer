@@ -9,6 +9,7 @@ getDate <- function(date) {
     sapply(strsplit(date, ' '), function(v) { v[1] })
 }
 
+# original data is from https://www.kaggle.com/hugomathien/soccer/data
 input <- dbConnect(SQLite(), 'database.sqlite')
 output <- dbConnect(SQLite(), 'soccer.sqlite')
 dbListTables(input)

@@ -1,66 +1,115 @@
 library(tidyverse)
+library(randomForest)
+library(imputeMissings)
 
 getTeam <- function(leagueID) {
-    with(dbGetQuery(con, paste('SELECT *
-                                FROM Team',
-                               if (leagueID != -1) paste0('WHERE leagueID = ', leagueID),
-                               'ORDER BY teamName, teamShortName')),
-         as.list(setNames(teamID, paste0(teamName, ' (', teamShortName, ')'))))
+    tryCatch({
+        teams <- with(dbGetQuery(con, paste('SELECT *
+                                             FROM Team',
+                                            if (leagueID != -1) paste0('WHERE leagueID = ', leagueID),
+                                            'ORDER BY teamName, teamShortName')),
+                      as.list(setNames(teamID, ifelse(teamShortName == '', teamName, paste0(teamName, ' (', teamShortName, ')')))))
+        if (length(teams) == 0) list(`(No Team)` = -2) else teams
+    }, error = function(e) {
+        list()
+    })
 }
 
 shinyServer(function(input, output, session) {
-    view.table <- NULL
-    match.table <- reactiveVal(NULL)
+    tables <- reactiveValues(view = NULL, match = NULL)
+    
+    updateSelect <- function(inputId, choices) {
+        selected <- if (input[[inputId]] %in% choices) input[[inputId]] else choices[1]
+        updateSelectInput(session, inputId, choices = choices, selected = selected)
+    }
+    
+    updateSelectize <- function(inputId, choices) {
+        selected <- if (input[[inputId]] %in% choices) input[[inputId]] else choices[1]
+        updateSelectizeInput(session, inputId, choices = choices, selected = selected)
+    }
     
     observeEvent(input$`view-table_cell_edit`, {
         info <- input$`view-table_cell_edit`
-        view.table.name <- colnames(view.table)
+        names <- colnames(tables$view)
         dbExecute(con, paste('UPDATE', input$`view-table-select`,
-                             'SET', view.table.name[info$col + 1], paste0('= "', info$value, '"'),
-                             'WHERE', view.table.name[1], '=', view.table[info$row, 1]))
-        view.table <<- editData(view.table, info, 'view-table', rownames = F)
-        
+                             'SET', names[info$col + 1], paste0('= "', info$value, '"'),
+                             'WHERE', names[1], '=', tables$view[info$row, 1]))
+        tables$view <- editData(tables$view, info, 'view-table', rownames = F, clearSelection = 'none')
+    })
+    
+    observeEvent(tables$view, {
         league <<- with(dbGetQuery(con, 'SELECT leagueID, leagueName
                                          FROM League
                                          ORDER BY leagueName'),
                         as.list(setNames(leagueID, leagueName)))
-        updateSelectInput(session, 'team-info-select', choices = addAll(league),
-                          selected = input$`team-info-select`)
-        updateSelectizeInput(session, 'player-info-select-league', choices = league,
-                             selected = input$`player-info-select-league`)
-        updateSelectizeInput(session, 'player-info-select-team',
-                             choices = addAll(getTeam(input$`player-info-select-league`), T),
-                             selected = input$`player-info-select-team`)
-        updateSelectizeInput(session, 'match-info-home-league', choices = addAll(league),
-                             selected = input$`match-info-home-league`)
-        updateSelectizeInput(session, 'match-info-home-team',
-                             choices = getTeam(input$`match-info-home-league`),
-                             selected = input$`match-info-home-team`)
-        updateSelectizeInput(session, 'match-info-away-league', choices = addAll(league),
-                             selected = input$`match-info-away-league`)
-        updateSelectizeInput(session, 'match-info-away-team',
-                             choices = getTeam(input$`match-info-away-league`),
-                             selected = input$`match-info-away-team`)
+        if (length(league) == 0)
+            league <<- list(`(No League)` = -2)
+        updateSelect('team-info-select', addAll(league))
+        updateSelectize('player-info-select-league', league)
+        updateSelectize('player-info-select-team', addAll(getTeam(input$`player-info-select-league`), T))
+        updateSelectize('match-info-home-league', addAll(league))
+        updateSelectize('match-info-home-team', getTeam(input$`match-info-home-league`))
+        updateSelectize('match-info-away-league', addAll(league))
+        updateSelectize('match-info-away-team', getTeam(input$`match-info-away-league`))
     })
     
     output$`view-table` <- renderDT({
-        DT <- datatable({
-            view.table <<- dbGetQuery(con, paste('SELECT *
+        input$`view-table-select`
+        isolate({
+            tables$view <- dbGetQuery(con, paste('SELECT *
                                                   FROM', input$`view-table-select`))
-        }, rownames = F, selection = 'none', editable = T,# extensions = c('Editor', 'Buttons'),
-        options = list(lengthMenu = c(5, 10, 15, 30, 50), pageLength = 15,
-                       scrollX = T, scrollY = T, scrollCollapse = T),
-                       # dom = 'lf<"datatable-buttons"B>rtip')
-                       # buttons = c('copy', 'CSV'))
-        )
-        if (input$`view-table-select` == 'Player')
-            DT %>% formatRound('height', 2, mark = '')
-        else
-            DT
+        })
+    }, rownames = F, selection = 'single', editable = 'cell', extensions = 'Buttons',
+    options = list(lengthMenu = c(5, 10, 12, 30, 50), pageLength = 12, scrollX = T, scrollY = T, scrollCollapse = T,
+                   searchHighlight = T, dom = 'lf<"datatable-buttons"B>rtip',
+                   buttons = list(list(extend = 'collection', text = 'Append a row',
+                                       action = JS('function() {
+                                                        Shiny.setInputValue("view-table-append", true, {priority: "event"});
+                                                    }')),
+                                  list(extend = 'collection', text = 'Delete selected row',
+                                       action = JS('function() {
+                                                        Shiny.setInputValue("view-table-delete", true, {priority: "event"});
+                                                    }')))),
+    callback = JS('$("#view-table .datatable-buttons button").get(1).classList.add("disabled");')
+    )
+    
+    observeEvent(input$`view-table-append`, {
+        ID <- max(tables$view[, 1]) + 1
+        table <- input$`view-table-select`
+        names <- colnames(tables$view)
+        blank <- grep('name$', names, T)
+        dbExecute(con, paste('INSERT INTO', table, '(', paste(names[c(1, blank)], collapse = ','), ')',
+                             'VALUES (', paste(c(ID, rep('""', length(blank))), collapse = ','), ')'))
+        n <- nrow(tables$view) + 1
+        tables$view[n, ] <- NA
+        tables$view[n, 1] <- ID
+        tables$view[n, blank] <- ''
+        proxy <- dataTableProxy('view-table')
+        replaceData(proxy, tables$view, rownames = F, resetPaging = F)
+        selectRows(proxy, n)
+        # clearSearch(proxy)
+        # selectPage(proxy, (nrow(tables$view) + input$`view-table_state`$length) %/% input$`view-table_state`$length)
+        runjs('$("#view-table table").DataTable().page("last").draw("page");')
+    })
+    
+    observeEvent(input$`view-table-delete`, {
+        row <- input$`view-table_rows_selected`
+        dbExecute(con, paste('DELETE FROM', input$`view-table-select`,
+                             'WHERE', colnames(tables$view)[1], '=', tables$view[row, 1]))
+        tables$view <- tables$view[-row, , drop = F]
+        replaceData(dataTableProxy('view-table'), tables$view, rownames = F, resetPaging = F)
+    })
+    
+    observe({
+        input$`view-table-select`
+        row <- input$`view-table_rows_selected`
+        runjs(paste0('$("#view-table .datatable-buttons button").get(1).classList.',
+                     if (length(row) == 0) 'add' else 'remove',
+                     '("disabled");'))
     })
     
     output$`team-info` <- renderDT({
-        input$`view-table_cell_edit`
+        tables$view
         leagueID <- input$`team-info-select`
         dbGetQuery(con, paste('SELECT *
                                FROM Team
@@ -69,21 +118,19 @@ shinyServer(function(input, output, session) {
                               if (leagueID != -1) paste0('WHERE leagueID = ', leagueID),
                               'ORDER BY TeamID'))
     }, rownames = F, selection = 'none', server = F, extensions = c('Select', 'Buttons'),
-    options = list(lengthMenu = c(5, 10, 15, 30, 50), pageLength = 15, scrollX = T, scrollY = T, scrollCollapse = T,
-                   select = 'multi', dom = 'lf<"datatable-buttons"B>rtip',
+    options = list(lengthMenu = c(5, 10, 12, 30, 50), pageLength = 12, scrollX = T, scrollY = T, scrollCollapse = T,
+                   select = 'multi', searchHighlight = T, dom = 'lf<"datatable-buttons"B>rtip',
                    buttons = list('selectAll', 'selectNone',
                                   list(extend = 'copy', text = 'Copy to clipboard', title = NULL),
                                   list(extend = 'csv', text = 'Save as CSV', title = 'export')))
     )
     
     observeEvent(input$`player-info-select-league`, {
-        updateSelectizeInput(session, 'player-info-select-team',
-                             #choices = getTeam(input$`player-info-select-league`))
-                             choices = addAll(getTeam(input$`player-info-select-league`), T))
+        updateSelectize('player-info-select-team', addAll(getTeam(input$`player-info-select-league`), T))
     })
     
-    output$`player-info` <- renderDT(datatable({
-        input$`view-table_cell_edit`
+    output$`player-info` <- renderDT({
+        tables$view
         leagueID <- input$`player-info-select-league`
         teamID <- input$`player-info-select-team`
         dbGetQuery(con, paste('SELECT *
@@ -96,26 +143,20 @@ shinyServer(function(input, output, session) {
                                else if (leagueID != -1)
                                    paste0('WHERE leagueID = ', leagueID),
                                'ORDER BY playerID'))
-    }, rownames = F, selection = 'none', extensions = c('Select', 'Buttons'),
-    options = list(lengthMenu = c(5, 10, 15, 30, 50), pageLength = 15, scrollX = T, scrollY = T, scrollCollapse = T,
-                   select = 'multi', dom = 'lf<"datatable-buttons"B>rtip',
+    }, rownames = F, selection = 'none', server = F, extensions = c('Select', 'Buttons'), 
+    options = list(lengthMenu = c(5, 10, 12, 30, 50), pageLength = 12, scrollX = T, scrollY = T, scrollCollapse = T,
+                   select = 'multi', searchHighlight = T, dom = 'lf<"datatable-buttons"B>rtip',
                    buttons = list('selectAll', 'selectNone',
                                   list(extend = 'copy', text = 'Copy to clipboard', title = NULL),
                                   list(extend = 'csv', text = 'Save as CSV', title = 'export')))
-    ) %>% formatRound('height', 2, mark = ''), server = F)
+    )
     
     observeEvent(input$`match-info-home-league`, {
-        teams <- getTeam(input$`match-info-home-league`)
-        team <- input$`match-info-home-team` 
-        updateSelectizeInput(session, 'match-info-home-team', choices = teams,
-                             selected = if (team %in% teams) team else teams[[1]])
+        updateSelectize('match-info-home-team', getTeam(input$`match-info-home-league`))
     })
     
     observeEvent(input$`match-info-away-league`, {
-        teams <- getTeam(input$`match-info-away-league`)
-        team <- input$`match-info-away-team` 
-        updateSelectizeInput(session, 'match-info-away-team', choices = teams,
-                             selected = if (team %in% teams) team else teams[[1]])
+        updateSelectize('match-info-away-team', getTeam(input$`match-info-away-league`))
     })
     
     observeEvent(input$`match-info-swap`, {
@@ -130,56 +171,34 @@ shinyServer(function(input, output, session) {
         updateSelectizeInput(session, 'match-info-away-team', choices = getTeam(league.home), selected = team.home)
     })
     
-    output$`player-info` <- renderDT({
-        input$`view-table_cell_edit`
-        leagueID <- input$`player-info-select-league`
-        teamID <- input$`player-info-select-team`
-        dbGetQuery(con, paste('SELECT *
-                               FROM Player
-                                    NATURAL LEFT OUTER JOIN Team
-                                    NATURAL LEFT OUTER JOIN League
-                                    NATURAL LEFT OUTER JOIN PlayerInfo',
-                              if (teamID != -1)
-                                  paste0('WHERE teamID = ', teamID)
-                              else if (leagueID != -1)
-                                  paste0('WHERE leagueID = ', leagueID),
-                              'ORDER BY playerID'))
-    }, rownames = F, selection = 'none', extensions = c('Select', 'Buttons'), server = F,
-    options = list(lengthMenu = c(5, 10, 15, 30, 50), pageLength = 15, scrollX = T, scrollY = T, scrollCollapse = T,
-                   select = 'multi', dom = 'lf<"datatable-buttons"B>rtip',
-                   buttons = list('selectAll', 'selectNone',
-                                  list(extend = 'copy', text = 'Copy to clipboard', title = NULL),
-                                  list(extend = 'csv', text = 'Save as CSV', title = 'export')))
-    )
-    
     output$`match-info` <- renderDT({
-        input$`view-table_cell_edit`
+        tables$view
         homeID <- input$`match-info-home-team`
         awayID <- input$`match-info-away-team`
         query <- 'NATURAL LEFT OUTER JOIN (
                   SELECT PlayerID AS %sPlayerID_%d, playerName AS %sPlayerName_%d
                   FROM Player
                   )'
-        match.table(dbGetQuery(con, paste('SELECT *
-                                           FROM Match',
-                                          do.call(paste, c(lapply(1:11, function(k) {
-                                              sprintf(query, 'home', k, 'home', k)
-                                          }))),
-                                          do.call(paste, c(lapply(1:11, function(k) {
-                                              sprintf(query, 'away', k, 'away', k)
-                                          }))),
-                                          'WHERE homeTeamID = ', homeID, 'AND awayTeamID = ', awayID,
-                                          'ORDER BY matchID')))
-        match.table()
-    }, rownames = F, selection = 'none', extensions = c('Select', 'Buttons'), server = F,
-    options = list(lengthMenu = c(1, 2, 4, 8, 10), pageLength = 4, scrollX = T, scrollY = T, scrollCollapse = T,
-                   select = 'multi', dom = 'lf<"datatable-buttons"B>rtip',
+        tables$match <- dbGetQuery(con, paste('SELECT *
+                                               FROM Match',
+                                              do.call(paste, c(lapply(1:11, function(k) {
+                                                  sprintf(query, 'home', k, 'home', k)
+                                              }))),
+                                              do.call(paste, c(lapply(1:11, function(k) {
+                                                  sprintf(query, 'away', k, 'away', k)
+                                              }))),
+                                              'WHERE homeTeamID = ', homeID, 'AND awayTeamID = ', awayID,
+                                              'ORDER BY matchID'))
+    }, rownames = F, selection = 'none', server = F, extensions = c('Select', 'Buttons'),
+    options = list(lengthMenu = c(1, 2, 3, 5, 10), pageLength = 2, scrollX = T, scrollY = T, scrollCollapse = T,
+                   select = 'multi', searchHighlight = T, dom = 'lf<"datatable-buttons"B>rtip',
                    buttons = list('selectAll', 'selectNone',
                                   list(extend = 'copy', text = 'Copy to clipboard', title = NULL),
                                   list(extend = 'csv', text = 'Save as CSV', title = 'export')))
     )
     
     output$`match-plot` <- renderPlot({
+        tables$view
         home <- dbGetQuery(con, paste('SELECT *
                                        FROM TeamInfo
                                        WHERE TeamID = ', input$`match-info-home-team`)) %>%
@@ -202,7 +221,7 @@ shinyServer(function(input, output, session) {
         home <- predict(homeGoal, match)
         away <- predict(awayGoal, match)
         
-        goal <- match.table() %>%
+        goal <- tables$match %>%
             select(Season = season, Home = homeTeamGoal, Away = awayTeamGoal) %>%
             rbind(list(Season = 'Prediction', Home = home, Away = away)) %>%
             pivot_longer(Home:Away, names_to = 'Team', values_to = 'Goal') %>%
@@ -210,7 +229,7 @@ shinyServer(function(input, output, session) {
         n <- nrow(goal)
         g <- ggplot(goal, aes(Season, Goal, color = Team, group = Team)) +
             geom_point(shape = 1, stroke = 2, size = 2.5) +
-            geom_text(aes(label = c(rep(NA, nrow(goal) - 2), round(c(home, away), 2))),
+            geom_text(aes(label = c(rep('', nrow(goal) - 2), sprintf('%.2f', c(home, away)))),
                       size = 5.5, family = 'Palatino', fontface = 'bold', hjust = -0.4, show.legend = F) +
             theme(text = element_text(size = 16, family = 'Palatino'))
         if (n >= 4)
@@ -221,5 +240,7 @@ shinyServer(function(input, output, session) {
             g
     })
     
-    runjs('$("body").resize()')
+    runjs('$(document).ready(function() {
+               $("body").resize();
+          });')
 })
