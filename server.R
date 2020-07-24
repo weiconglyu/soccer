@@ -69,6 +69,10 @@ shinyServer(function(input, output, session) {
                                   list(extend = 'collection', text = 'Delete selected row',
                                        action = JS('function() {
                                                         Shiny.setInputValue("view-table-delete", true, {priority: "event"});
+                                                    }')),
+                                  list(extend = 'collection', text = 'Reset current table',
+                                       action = JS('function() {
+                                                        Shiny.setInputValue("view-table-reset", true, {priority: "event"});
                                                     }')))),
     callback = JS('$("#view-table .datatable-buttons button").get(1).classList.add("disabled");')
     )
@@ -98,6 +102,15 @@ shinyServer(function(input, output, session) {
                              'WHERE', colnames(tables$view)[1], '=', tables$view[row, 1]))
         tables$view <- tables$view[-row, , drop = F]
         replaceData(dataTableProxy('view-table'), tables$view, rownames = F, resetPaging = F)
+    })
+    
+    observeEvent(input$`view-table-reset`, {
+        backup <- dbConnect(SQLite(), 'backup.sqlite')
+        tables$view <- dbGetQuery(backup, paste('SELECT *
+                                                 FROM', input$`view-table-select`))
+        dbDisconnect(backup)
+        dbWriteTable(con, input$`view-table-select`, overwrite = T, tables$view)
+        replaceData(dataTableProxy('view-table'), tables$view, rownames = F)
     })
     
     observe({

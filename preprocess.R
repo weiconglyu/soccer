@@ -154,9 +154,11 @@ FROM Match
 m <- ncol(match)
 imputeMatch <- imputeMissings::compute(match[, 3:m])
 match <- cbind(match[, 1:2], impute(match[, 3:m], imputeMatch))
-homeGoal <- randomForest(homeTeamGoal ~ ., select(match, -awayTeamGoal), ntree = 20)
-awayGoal <- randomForest(awayTeamGoal ~ ., select(match, -homeTeamGoal), ntree = 20)
+homeGoal <- randomForest(homeTeamGoal ~ ., select(match, -awayTeamGoal), ntree = 50)
+awayGoal <- randomForest(awayTeamGoal ~ ., select(match, -homeTeamGoal), ntree = 50)
 
 save(list = c('imputeMatch', 'homeGoal', 'awayGoal'), file = 'predict.RData')
 dbDisconnect(input)
 dbDisconnect(output)
+
+file.copy('soccer.sqlite', 'backup.sqlite', overwrite = T)
