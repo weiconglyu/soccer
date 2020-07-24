@@ -1,3 +1,9 @@
+lib <- c('shinydashboard', 'shinyjs', 'htmltools', 'DT', 'RSQLite', 'DBI',
+         'tidyverse', 'randomForest', 'imputeMissings')
+for (pkg in lib)
+    if (!require(pkg, character.only = T))
+        install.packages(pkg)
+
 library(shiny)
 library(shinyjs)
 library(htmltools)
